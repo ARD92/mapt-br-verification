@@ -1,0 +1,7 @@
+---
+dmr-prefix : "2001:db8:ffff/64"
+mapt-prefix: "3001:db8::/48"
+eabits-len: "12"
+ipv4-prefix: "172.168.0.0/24"
+psid-offset: "6"
+psid-len: "4"
