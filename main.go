@@ -61,27 +61,14 @@ func createDestIp(mapt maptDomain) {
 }
 */
 
-// find start port based on offset defined
-func startPort(psidoffset int) int {
-	if psidoffset == 0 {
-		return 0
-	} else {
-		return int(math.Pow(2, 16.0-float64(psidoffset)))
-	}
-}
-
-// find range of ports based on offset defined
-func portRange(psidoffset int) int {
-	return int(math.Pow(2, float64(psidoffset)) - 1.0)
-}
-
-// create source ports for respective PSIDs
-func createSourcePort(psidoffset int, portmodifierbits int) {
+/*
+creates and returns all source ports based on PSIDs
+*/
+func createSourcePort(psidoffset int, portmodifierbits int, psidstartval int) []int {
 	var portlist []int
-	var shifted int
-	offsetval := startPort(psidoffset)
-	startport := startPort(psidoffset)
-	for i := 1; i <= psidoffset; i++ {
+	var startport int
+	startport = int(math.Pow(2, float64(16-psidoffset))) + psidstartval
+	for i := 1; i <= int(math.Pow(2, float64(psidoffset))); i++ {
 		for j := 1; j <= int(math.Pow(2, float64(portmodifierbits))); j++ {
 			portval := startport + j
 			if portval <= 65536 {
@@ -90,10 +77,24 @@ func createSourcePort(psidoffset int, portmodifierbits int) {
 				continue
 			}
 		}
-		shifted = offsetval << i
-		startport = startport + shifted
+		startport = startport + int(math.Pow(2, float64(16-psidoffset)))
 	}
-	fmt.Println(portlist)
+	return portlist
+}
+
+/*
+Create startport range value for all psids based on psidlen and returns all the
+ports computed into a map for each PSID
+*/
+func portsPerPsid(psidoffset int, psidlen int, portmodifierbits int) map[int][]int {
+	var psidPortMap = make(map[int][]int)
+	startval := 0
+	for i := 0; i < int(math.Pow(2, float64(psidlen))); i++ {
+		val := createSourcePort(psidoffset, portmodifierbits, startval)
+		startval = startval + int(math.Pow(2, float64(16-psidoffset-psidlen)))
+		psidPortMap[i] = val
+	}
+	return psidPortMap
 }
 
 // Choose a random port between 1024-65535.This returns hex value
@@ -152,7 +153,9 @@ func calculateRange(mapt MaptDomain) {
 	// print inputs
 	printInputs(mapt.DmrPrefix, mapt.MaptPrefix, psidoffset, psidlen, mapt.Ipv4Prefix, mapt.DestV4Ip, portmodifierbits, ceportrange)
 	if mapt.GenerateIncorrectRanges != true {
-		createSourcePort(psidoffset, portmodifierbits)
+		usableSports := portsPerPsid(psidoffset, psidlen, portmodifierbits)
+		fmt.Println(usableSports)
+		//dport := createDestPort(1024, 65535)
 		// circulate through all customers IPs
 		for host := 0; host <= int(math.Pow(2, float64(ipv4suffixlen)))-2; host++ {
 			// circulate through customers sharing the same prefix
