@@ -14,8 +14,11 @@ import (
 	"strconv"
 	"strings"
 
+	"net"
+
+	"net/netip"
+
 	"gopkg.in/yaml.v3"
-	"inet.af/netaddr"
 
 	//"github.com/google/gopacket"
 	//"github.com/google/gopacket/layers"
@@ -35,7 +38,9 @@ type MaptDomain struct {
 	DestV4Ip                string `yaml:"dest-v4-ip"`
 }
 
-// print function
+/*
+print input passed along with calculations
+*/
 func printInputs(dmrprefix string, maptprefix string, psidoffset int, psidlen int, v4sourceip string, v4destip string, portmodifierbits int, ceportrange int) {
 	fmt.Println(" ====Generating RG traffic for below domain configs ===\n")
 	fmt.Println("DMR prefix: ", dmrprefix)
@@ -45,16 +50,31 @@ func printInputs(dmrprefix string, maptprefix string, psidoffset int, psidlen in
 	fmt.Println("Source v4 IP: ", v4sourceip)
 	fmt.Println("Dest v4 IP: ", v4destip)
 	fmt.Println("num modifier bits: ", portmodifierbits)
-	fmt.Println("num ports per ce/PSID: ", ceportrange)
+	fmt.Println("num of usable source ports per ce/PSID: ", ceportrange)
 	fmt.Println("=======================================================\n")
 }
 
 /*
-// Craft source IP to mimic MAP-T CE device.This returns hex value
-func createSourceIp() {
-	return sourceIp
+genrate interface
+
+	| 16 bits|    32 bits     | 16 bits|
+	+--------+----------------+--------+
+	|   0    |  IPv4 address  |  PSID  |
+	+--------+----------------+--------+
+*/
+func genInterfaceId(psid int, ipv4add net.IP) {
+	fmt.Println("generating interface ID")
+	//var zeros uint16
+	//var ipv4 uint32
+	//var psid uint16
 }
 
+// Craft source IP to mimic MAP-T CE device.This returns hex value
+func createSourceIp(ruleprefix string, psid int, sport int, ipv4address netip.Addr) {
+	fmt.Println(ipv4address)
+}
+
+/*
 // Craft destination IP to mimic MAP-T CE device. This returns hex value
 func createDestIp(mapt maptDomain) {
 	return destIp
@@ -65,8 +85,10 @@ func createDestIp(mapt maptDomain) {
 creates and returns all source ports based on PSIDs
 */
 func createSourcePort(psidoffset int, portmodifierbits int, psidstartval int) []int {
-	var portlist []int
-	var startport int
+	var (
+		portlist  []int
+		startport int
+	)
 	startport = int(math.Pow(2, float64(16-psidoffset))) + psidstartval
 	for i := 1; i <= int(math.Pow(2, float64(psidoffset))); i++ {
 		for j := 1; j <= int(math.Pow(2, float64(portmodifierbits))); j++ {
@@ -97,28 +119,37 @@ func portsPerPsid(psidoffset int, psidlen int, portmodifierbits int) map[int][]i
 	return psidPortMap
 }
 
-// Choose a random port between 1024-65535.This returns hex value
-func createDestPort(min int, max int) int {
+/*
+Generate random value between 2 numbers
+*/
+func generateRandom(min int, max int) int {
 	return rand.Intn(max-min) + min
 }
 
-// Calculate number of subscribers the domain config can server
+/*
+Calculate number of subscribers the domain config can serve.
+This will craft all the MAP-T CE source IP addresses for
+various PSIDs
+*/
 func calculateRange(mapt MaptDomain) {
-	var eabitslen int
-	var psidoffset int
-	var psidlen int
-	var portmodifierbits int
-	var ipv4suffixlen int
+	var (
+		eabitslen        int
+		psidoffset       int
+		psidlen          int
+		portmodifierbits int
+		ipv4suffixlen    int
+	)
 
 	splitip := strings.Split(mapt.Ipv4Prefix, "/")
 	subnetmask, _ := strconv.Atoi(splitip[1])
 	ipv4suffixlen = 32 - subnetmask
 
-	// Ipprefix parsing
+	/*Ipprefix parsing
 	parsePrefix, err := netaddr.ParseIP(splitip[0])
 	if err != nil {
 		panic("Unable to parse IPv4 prefix")
-	}
+	}*/
+
 	// handle eabitlen
 	if mapt.EaBitsLen != 0 {
 		eabitslen = mapt.EaBitsLen
@@ -146,23 +177,31 @@ func calculateRange(mapt MaptDomain) {
 	} else {
 		panic("Error: Psid len not defined. Please set this value and retry!")
 	}
+
 	// port modifier bits
 	portmodifierbits = 16 - psidoffset - psidlen
 	ceportrange := int((math.Pow(2, float64(portmodifierbits)) - 1) * (math.Pow(2, float64(psidoffset)) - 1))
-	fmt.Println(parsePrefix)
-	// print inputs
+
+	// print inputs before starting traffic
 	printInputs(mapt.DmrPrefix, mapt.MaptPrefix, psidoffset, psidlen, mapt.Ipv4Prefix, mapt.DestV4Ip, portmodifierbits, ceportrange)
+
+	prefix, err := netip.ParsePrefix(mapt.Ipv4Prefix)
+	if err != nil {
+		panic(err)
+	}
 	if mapt.GenerateIncorrectRanges != true {
 		usableSports := portsPerPsid(psidoffset, psidlen, portmodifierbits)
-		fmt.Println(usableSports)
-		//dport := createDestPort(1024, 65535)
 		// circulate through all customers IPs
-		for host := 0; host <= int(math.Pow(2, float64(ipv4suffixlen)))-2; host++ {
+		//for host := 1; host <= int(math.Pow(2, float64(ipv4suffixlen)))-2; host++ {
+		for addr := prefix.Addr(); prefix.Contains(addr); addr = addr.Next() {
 			// circulate through customers sharing the same prefix
 			for psid := 0; psid <= int(math.Pow(2, float64(psidlen)))-1; psid++ {
-				//sip := createSourceIp()
-				//sport := createDestIp()
-				//dport := createDestPort(1024, 65535)
+				//pick a random port in the list of usable ports
+				sportindex := generateRandom(0, len(usableSports[psid]))
+				sport := usableSports[psid][sportindex]
+				// pick a random destport
+				//dport := generateRandom(1024, 65535)
+				createSourceIp(mapt.MaptPrefix, psid, sport, addr)
 			}
 		}
 	} else {
@@ -205,7 +244,6 @@ func main() {
 			if err != nil {
 				fmt.Println(err)
 			}
-			//fmt.Println(mapt)
 			calculateRange(mapt)
 		}
 	} else {
