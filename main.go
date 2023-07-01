@@ -11,12 +11,9 @@ import (
 	"io/ioutil"
 	"math"
 	"math/rand"
+	"net/netip"
 	"strconv"
 	"strings"
-
-	"net"
-
-	"net/netip"
 
 	"gopkg.in/yaml.v3"
 
@@ -62,16 +59,35 @@ genrate interface
 	|   0    |  IPv4 address  |  PSID  |
 	+--------+----------------+--------+
 */
-func genInterfaceId(psid int, ipv4add net.IP) {
+func genInterfaceId(psid int, ipv4address netip.Addr) string {
 	fmt.Println("generating interface ID")
-	//var zeros uint16
-	//var ipv4 uint32
-	//var psid uint16
+	var iid []string
+
+	// 16bits of zeros string slice
+	//zb := make([]string, 2)
+	iid = append(iid, fmt.Sprintf("%016b", 0))
+
+	// IPv4 in binary string slice
+	ip4, _ := ipv4address.MarshalBinary()
+	for _, b := range ip4 {
+		iid = append(iid, fmt.Sprintf("%08b", b))
+	}
+
+	/*Psid in binary string slice
+	left pad with 0's to make length 16 */
+	bpsid := strconv.FormatInt(int64(psid), 2)
+	ppsid := fmt.Sprintf("%016s", bpsid)
+	iid = append(iid, ppsid)
+
+	return strings.Join(iid, "")
 }
 
 // Craft source IP to mimic MAP-T CE device.This returns hex value
-func createSourceIp(ruleprefix string, psid int, sport int, ipv4address netip.Addr) {
-	fmt.Println(ipv4address)
+func createSourceIp(ruleprefix string, psid int, sport int, ipv4address netip.Addr, eabitlen int) {
+	//iid := genInterfaceId(psid, ipv4address)
+	splitmapt := strings.Split(ruleprefix, "/")
+	rulesubnet, _ := strconv.Atoi(splitmapt[1])
+	fmt.Println(rulesubnet)
 }
 
 /*
@@ -144,12 +160,6 @@ func calculateRange(mapt MaptDomain) {
 	subnetmask, _ := strconv.Atoi(splitip[1])
 	ipv4suffixlen = 32 - subnetmask
 
-	/*Ipprefix parsing
-	parsePrefix, err := netaddr.ParseIP(splitip[0])
-	if err != nil {
-		panic("Unable to parse IPv4 prefix")
-	}*/
-
 	// handle eabitlen
 	if mapt.EaBitsLen != 0 {
 		eabitslen = mapt.EaBitsLen
@@ -201,7 +211,7 @@ func calculateRange(mapt MaptDomain) {
 				sport := usableSports[psid][sportindex]
 				// pick a random destport
 				//dport := generateRandom(1024, 65535)
-				createSourceIp(mapt.MaptPrefix, psid, sport, addr)
+				createSourceIp(mapt.MaptPrefix, psid, sport, addr, eabitslen)
 			}
 		}
 	} else {
