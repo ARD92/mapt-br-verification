@@ -250,6 +250,12 @@ func calculateRange(mapt MaptDomain) {
 		ipv4suffixlen    int
 		computedpfx      []netip.Addr
 	)
+	file, errs := os.Create("MAPT_CE_SIP_DIP.txt")
+	if errs != nil {
+		fmt.Println("failed to create file\n")
+		return
+	}
+	defer file.Close()
 
 	splitip := strings.Split(mapt.Ipv4Prefix, "/")
 	subnetmask, _ := strconv.Atoi(splitip[1])
@@ -322,7 +328,20 @@ func calculateRange(mapt MaptDomain) {
 				// pick a random destination prefix from the computed list
 				dipfx := generateRandom(0, len(computedpfx)-1)
 				dip := createDestIp(mapt.DmrPrefix, computedpfx[dipfx])
-				fmt.Printf("SourceIP: %v, Source port: %v, Des IP: %v, Destport: %v \n", sip, sport, dip, dport)
+				if len(os.Args) > 2 {
+					if os.Args[2] == "save" {
+						_, errs = file.WriteString("Source IP: " + sip + " Destionation IP: " + dip + " Source port: " + strconv.Itoa(sport) + " Destination Port: " + strconv.Itoa(dport) + "\n")
+						if errs != nil {
+							fmt.Println("Error!!! Failed to write results to file", errs)
+						}
+					} else if os.Args[2] == "generate" {
+						fmt.Println("\nWIP: Cannot generate traffic yet!\n")
+					} else {
+						continue
+					}
+				} else {
+					continue
+				}
 			}
 		}
 	} else {
@@ -342,8 +361,9 @@ func main() {
 		if (os.Args[1] == "help") || (os.Args[1] == "--help") {
 			fmt.Printf(`
 	==============  MAP-T BR Verification Tool  ================
-				
-	Usage: ./mapt-br-verification <input.yaml>
+	Version: 1.0 
+
+	Usage: ./mapt-br-verification <input.yaml> save
 	
 	This will craft packets within the defined ranges such that the BR would 
 	translate. The idea is mimic a CPE device generating an IPv4 embedded Ipv6
@@ -352,7 +372,8 @@ func main() {
 	when using the flag generate-incorrect-ranges. This will intentially craft a 
 	packet outside of the range of PSID or use incorrect mapt-prefixes such that
 	the BR fails translations.
-	
+
+	The argument save, will save the computed result into a file named MAPT_CE_SIP_DIP.txt
 	============================================================
 			`)
 			fmt.Printf("\n")
@@ -365,7 +386,13 @@ func main() {
 			if err != nil {
 				fmt.Println(err)
 			}
-			calculateRange(mapt)
+			if len(os.Args) > 2 {
+				if os.Args[2] == "save" {
+					calculateRange(mapt)
+				} else {
+					fmt.Println("\nError!!! Incorrect input, not computing. check usage under help")
+				}
+			}
 		}
 	} else {
 		fmt.Println("Missing or incorrect argument input file. Please refer to help function \n")
