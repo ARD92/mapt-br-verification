@@ -83,11 +83,48 @@ func genInterfaceId(psid int, ipv4address netip.Addr) string {
 }
 
 // Craft source IP to mimic MAP-T CE device.This returns hex value
-func createSourceIp(ruleprefix string, psid int, sport int, ipv4address netip.Addr, eabitlen int) {
-	//iid := genInterfaceId(psid, ipv4address)
+func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitlen int) {
+	iid := genInterfaceId(psid, ipv4address)
+	fmt.Println("IID: ", iid)
+
 	splitmapt := strings.Split(ruleprefix, "/")
 	rulesubnet, _ := strconv.Atoi(splitmapt[1])
-	fmt.Println(rulesubnet)
+
+	// parse rule prefix
+	var sourceip []string
+	v6prefix, err := netip.ParsePrefix(ruleprefix)
+	if err != nil {
+		panic("unable to parse Ipv6 rule prefix")
+	}
+	ip6, _ := v6prefix.Addr().MarshalBinary()
+	for _,b := range ip6 {
+		sourceip = append(sourceip, fmt.Sprintf("%b",b))
+	}
+
+	//create eabits
+	var eaval []string
+	bpsid := strconv.FormatInt(int64(psid), 2)
+	fmt.Println("length of bpsid: ", bpsid)
+	suffixlen := eabitlen - len(bpsid)
+	fmt.Println("length of suffix: ", suffixlen)
+	suffixval := iid[16 + (32-suffixlen):48]
+	eaval = append(eaval, suffixval)
+	eaval = append(eaval, bpsid)
+	fmt.Println("eaval is: ", eaval)
+
+	// calculate 0s to pad 
+	sbits := 64 - rulesubnet - eabitlen
+	var sbitval string
+	for i:=0;i <sbits; i++ {
+		sbitval += "0"
+	}
+	fmt.Println("length of sbits: ", sbitval)
+
+	sourceip = append(sourceip, eaval[0])
+	sourceip = append(sourceip, sbitval)
+	sourceip = append(sourceip, iid)
+
+	fmt.Println("sourceIP: ",strings.Join(sourceip, ""))
 }
 
 /*
@@ -202,7 +239,6 @@ func calculateRange(mapt MaptDomain) {
 	if mapt.GenerateIncorrectRanges != true {
 		usableSports := portsPerPsid(psidoffset, psidlen, portmodifierbits)
 		// circulate through all customers IPs
-		//for host := 1; host <= int(math.Pow(2, float64(ipv4suffixlen)))-2; host++ {
 		for addr := prefix.Addr(); prefix.Contains(addr); addr = addr.Next() {
 			// circulate through customers sharing the same prefix
 			for psid := 0; psid <= int(math.Pow(2, float64(psidlen)))-1; psid++ {
@@ -210,8 +246,9 @@ func calculateRange(mapt MaptDomain) {
 				sportindex := generateRandom(0, len(usableSports[psid]))
 				sport := usableSports[psid][sportindex]
 				// pick a random destport
-				//dport := generateRandom(1024, 65535)
-				createSourceIp(mapt.MaptPrefix, psid, sport, addr, eabitslen)
+				dport := generateRandom(1024, 65535)
+				fmt.Println("Source port, destport: ",sport, dport)
+				createSourceIp(mapt.MaptPrefix, psid, addr, eabitslen)
 			}
 		}
 	} else {
