@@ -149,10 +149,47 @@ func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitle
 
 /*
 Craft destination IP to mimic MAP-T CE device. This returns hex value
-func createDestIp(dmrprefix string, destip string) {
-	return destIp
-}
+<---------- 64 ------------>< 8 ><----- 32 -----><--- 24 --->
++--------------------------+----+---------------+-----------+
+|        BR prefix         | u  | IPv4 address  |     0     |
++--------------------------+----+---------------+-----------+
 */
+
+func createDestIp(dmrprefix string, destip netip.Addr) string {
+	var bdestip []string
+	var bdmrprefix []string
+
+	splitmapt := strings.Split(dmrprefix, "/")
+	dmrsubnet, _ := strconv.Atoi(splitmapt[1])
+	v6prefix, err := netip.ParsePrefix(dmrprefix)
+	if err != nil {
+		panic("unable to parse Ipv6 rule prefix")
+	}
+	ip6, _ := v6prefix.Addr().MarshalBinary()
+	for _, b := range ip6 {
+		bdmrprefix = append(bdmrprefix, fmt.Sprintf("%08b", b))
+	}
+	bdestip = append(bdestip, strings.Join(bdmrprefix, "")[:dmrsubnet])
+
+	// IPv4 in binary string slice
+	var ipv4address []string
+	ip4, _ := destip.MarshalBinary()
+	for _, b := range ip4 {
+		ipv4address = append(ipv4address, fmt.Sprintf("%08b", b))
+	}
+	jipv4 := strings.Join(ipv4address, "")
+
+	// 8 bits of zeros
+	u := fmt.Sprintf("%08b", 0)
+
+	// 24 bits of zeros
+	zeros := fmt.Sprintf("%024b", 0)
+
+	bdestip = append(bdestip, u, jipv4, zeros)
+
+	return binaryToV6(strings.Join(bdestip, ""))
+
+}
 
 /*
 creates and returns all source ports based on PSIDs
@@ -211,7 +248,14 @@ func calculateRange(mapt MaptDomain) {
 		psidlen          int
 		portmodifierbits int
 		ipv4suffixlen    int
+		computedpfx      []netip.Addr
 	)
+	file, errs := os.Create("MAPT_CE_SIP_DIP.txt")
+	if errs != nil {
+		fmt.Println("failed to create file\n")
+		return
+	}
+	defer file.Close()
 
 	splitip := strings.Split(mapt.Ipv4Prefix, "/")
 	subnetmask, _ := strconv.Atoi(splitip[1])
@@ -252,10 +296,23 @@ func calculateRange(mapt MaptDomain) {
 	// print inputs before starting traffic
 	printInputs(mapt.DmrPrefix, mapt.MaptPrefix, psidoffset, psidlen, mapt.Ipv4Prefix, mapt.DestV4Ip, portmodifierbits, ceportrange)
 
+	// mapt customer ipv4 prefix
 	prefix, err := netip.ParsePrefix(mapt.Ipv4Prefix)
 	if err != nil {
 		panic(err)
 	}
+
+	// destination prefix
+	dpfx, err := netip.ParsePrefix(mapt.DestV4Ip)
+	if err != nil {
+		panic(err)
+	}
+
+	//compute possible destinations within provided subnet
+	for daddr := dpfx.Addr(); dpfx.Contains(daddr); daddr = daddr.Next() {
+		computedpfx = append(computedpfx, daddr)
+	}
+
 	if mapt.GenerateIncorrectRanges != true {
 		usableSports := portsPerPsid(psidoffset, psidlen, portmodifierbits)
 		// circulate through all customers IPs
@@ -268,8 +325,23 @@ func calculateRange(mapt MaptDomain) {
 				// pick a random destport
 				dport := generateRandom(1024, 65535)
 				sip := createSourceIp(mapt.MaptPrefix, psid, addr, eabitslen)
-				//dip := createDestIp(mapt.DmrPrefix, mapt.DestV4Ip)
-				fmt.Printf("SourceIP: %v, Source port: %v, destport: %v \n", sip, sport, dport)
+				// pick a random destination prefix from the computed list
+				dipfx := generateRandom(0, len(computedpfx)-1)
+				dip := createDestIp(mapt.DmrPrefix, computedpfx[dipfx])
+				if len(os.Args) > 2 {
+					if os.Args[2] == "save" {
+						_, errs = file.WriteString("Source IP: " + sip + " Destionation IP: " + dip + " Source port: " + strconv.Itoa(sport) + " Destination Port: " + strconv.Itoa(dport) + "\n")
+						if errs != nil {
+							fmt.Println("Error!!! Failed to write results to file", errs)
+						}
+					} else if os.Args[2] == "generate" {
+						fmt.Println("\nWIP: Cannot generate traffic yet!\n")
+					} else {
+						continue
+					}
+				} else {
+					continue
+				}
 			}
 		}
 	} else {
@@ -289,8 +361,9 @@ func main() {
 		if (os.Args[1] == "help") || (os.Args[1] == "--help") {
 			fmt.Printf(`
 	==============  MAP-T BR Verification Tool  ================
-				
-	Usage: ./mapt-br-verification <input.yaml>
+	Version: 1.0 
+
+	Usage: ./mapt-br-verification <input.yaml> save
 	
 	This will craft packets within the defined ranges such that the BR would 
 	translate. The idea is mimic a CPE device generating an IPv4 embedded Ipv6
@@ -299,7 +372,8 @@ func main() {
 	when using the flag generate-incorrect-ranges. This will intentially craft a 
 	packet outside of the range of PSID or use incorrect mapt-prefixes such that
 	the BR fails translations.
-	
+
+	The argument save, will save the computed result into a file named MAPT_CE_SIP_DIP.txt
 	============================================================
 			`)
 			fmt.Printf("\n")
@@ -312,7 +386,13 @@ func main() {
 			if err != nil {
 				fmt.Println(err)
 			}
-			calculateRange(mapt)
+			if len(os.Args) > 2 {
+				if os.Args[2] == "save" {
+					calculateRange(mapt)
+				} else {
+					fmt.Println("\nError!!! Incorrect input, not computing. check usage under help")
+				}
+			}
 		}
 	} else {
 		fmt.Println("Missing or incorrect argument input file. Please refer to help function \n")

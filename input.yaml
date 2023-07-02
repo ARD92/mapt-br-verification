@@ -1,6 +1,6 @@
 ---
 dmr-prefix : "2001:db8:1111:2222::/64"
-mapt-prefix: "3010:1122::/32"
+mapt-prefix: "3010:1122::/44"
 eabits-len: 12
 ipv4-prefix: "12.8.10.0/24"
 psid-offset: 6
