@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"math"
 	"math/rand"
+	"net"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -52,6 +53,29 @@ func printInputs(dmrprefix string, maptprefix string, psidoffset int, psidlen in
 }
 
 /*
+This converts binary string to IPv6 format
+*/
+func binaryToV6(binary string) string {
+	// Pad the binary string with leading zeros to ensure it has 128 bits
+	paddedbinarystring := fmt.Sprintf("%0128s", binary)
+
+	// Convert the binary string to a byte slice
+	bytes := make([]byte, 16)
+	for i := 0; i < 16; i++ {
+		b, err := strconv.ParseUint(paddedbinarystring[i*8:(i+1)*8], 2, 8)
+		if err != nil {
+			fmt.Println("Invalid binary string:", err)
+		}
+		bytes[i] = byte(b)
+	}
+
+	// Create an IPv6 address from the byte slice
+	ip := net.IP(bytes)
+
+	return ip.String()
+}
+
+/*
 genrate interface
 
 	| 16 bits|    32 bits     | 16 bits|
@@ -60,7 +84,6 @@ genrate interface
 	+--------+----------------+--------+
 */
 func genInterfaceId(psid int, ipv4address netip.Addr) string {
-	fmt.Println("generating interface ID")
 	var iid []string
 
 	// 16bits of zeros string slice
@@ -83,53 +106,50 @@ func genInterfaceId(psid int, ipv4address netip.Addr) string {
 }
 
 // Craft source IP to mimic MAP-T CE device.This returns hex value
-func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitlen int) {
+func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitlen int) string {
+	var sourceip []string
+
 	iid := genInterfaceId(psid, ipv4address)
-	fmt.Println("IID: ", iid)
 
 	splitmapt := strings.Split(ruleprefix, "/")
 	rulesubnet, _ := strconv.Atoi(splitmapt[1])
 
 	// parse rule prefix
-	var sourceip []string
+	var maptprefix []string
 	v6prefix, err := netip.ParsePrefix(ruleprefix)
 	if err != nil {
 		panic("unable to parse Ipv6 rule prefix")
 	}
 	ip6, _ := v6prefix.Addr().MarshalBinary()
-	for _,b := range ip6 {
-		sourceip = append(sourceip, fmt.Sprintf("%b",b))
+	//for i := 0; i < 4; i++ {
+	for _, b := range ip6 {
+		maptprefix = append(maptprefix, fmt.Sprintf("%08b", b))
 	}
+
+	sourceip = append(sourceip, strings.Join(maptprefix, "")[:rulesubnet])
 
 	//create eabits
 	var eaval []string
 	bpsid := strconv.FormatInt(int64(psid), 2)
-	fmt.Println("length of bpsid: ", bpsid)
 	suffixlen := eabitlen - len(bpsid)
-	fmt.Println("length of suffix: ", suffixlen)
-	suffixval := iid[16 + (32-suffixlen):48]
-	eaval = append(eaval, suffixval)
-	eaval = append(eaval, bpsid)
-	fmt.Println("eaval is: ", eaval)
+	suffixval := iid[16+(32-suffixlen) : 48]
+	eaval = append(eaval, suffixval, bpsid)
 
-	// calculate 0s to pad 
+	// calculate 0s to pad
 	sbits := 64 - rulesubnet - eabitlen
 	var sbitval string
-	for i:=0;i <sbits; i++ {
+	for i := 0; i < sbits; i++ {
 		sbitval += "0"
 	}
-	fmt.Println("length of sbits: ", sbitval)
 
-	sourceip = append(sourceip, eaval[0])
-	sourceip = append(sourceip, sbitval)
-	sourceip = append(sourceip, iid)
-
-	fmt.Println("sourceIP: ",strings.Join(sourceip, ""))
+	sourceip = append(sourceip, eaval[0], eaval[1], sbitval, iid)
+	sourceipjoined := strings.Join(sourceip, "")
+	return binaryToV6(sourceipjoined)
 }
 
 /*
-// Craft destination IP to mimic MAP-T CE device. This returns hex value
-func createDestIp(mapt maptDomain) {
+Craft destination IP to mimic MAP-T CE device. This returns hex value
+func createDestIp(dmrprefix string, destip string) {
 	return destIp
 }
 */
@@ -247,8 +267,9 @@ func calculateRange(mapt MaptDomain) {
 				sport := usableSports[psid][sportindex]
 				// pick a random destport
 				dport := generateRandom(1024, 65535)
-				fmt.Println("Source port, destport: ",sport, dport)
-				createSourceIp(mapt.MaptPrefix, psid, addr, eabitslen)
+				sip := createSourceIp(mapt.MaptPrefix, psid, addr, eabitslen)
+				//dip := createDestIp(mapt.DmrPrefix, mapt.DestV4Ip)
+				fmt.Printf("SourceIP: %v, Source port: %v, destport: %v \n", sip, sport, dport)
 			}
 		}
 	} else {
