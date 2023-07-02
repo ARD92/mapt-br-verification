@@ -149,10 +149,47 @@ func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitle
 
 /*
 Craft destination IP to mimic MAP-T CE device. This returns hex value
-func createDestIp(dmrprefix string, destip string) {
-	return destIp
-}
+<---------- 64 ------------>< 8 ><----- 32 -----><--- 24 --->
++--------------------------+----+---------------+-----------+
+|        BR prefix         | u  | IPv4 address  |     0     |
++--------------------------+----+---------------+-----------+
 */
+
+func createDestIp(dmrprefix string, destip netip.Addr) string {
+	var bdestip []string
+	var bdmrprefix []string
+
+	splitmapt := strings.Split(dmrprefix, "/")
+	dmrsubnet, _ := strconv.Atoi(splitmapt[1])
+	v6prefix, err := netip.ParsePrefix(dmrprefix)
+	if err != nil {
+		panic("unable to parse Ipv6 rule prefix")
+	}
+	ip6, _ := v6prefix.Addr().MarshalBinary()
+	for _, b := range ip6 {
+		bdmrprefix = append(bdmrprefix, fmt.Sprintf("%08b", b))
+	}
+	bdestip = append(bdestip, strings.Join(bdmrprefix, "")[:dmrsubnet])
+
+	// IPv4 in binary string slice
+	var ipv4address []string
+	ip4, _ := destip.MarshalBinary()
+	for _, b := range ip4 {
+		ipv4address = append(ipv4address, fmt.Sprintf("%08b", b))
+	}
+	jipv4 := strings.Join(ipv4address, "")
+
+	// 8 bits of zeros
+	u := fmt.Sprintf("%08b", 0)
+
+	// 24 bits of zeros
+	zeros := fmt.Sprintf("%024b", 0)
+
+	bdestip = append(bdestip, u, jipv4, zeros)
+
+	return binaryToV6(strings.Join(bdestip, ""))
+
+}
 
 /*
 creates and returns all source ports based on PSIDs
@@ -211,6 +248,7 @@ func calculateRange(mapt MaptDomain) {
 		psidlen          int
 		portmodifierbits int
 		ipv4suffixlen    int
+		computedpfx      []netip.Addr
 	)
 
 	splitip := strings.Split(mapt.Ipv4Prefix, "/")
@@ -252,10 +290,23 @@ func calculateRange(mapt MaptDomain) {
 	// print inputs before starting traffic
 	printInputs(mapt.DmrPrefix, mapt.MaptPrefix, psidoffset, psidlen, mapt.Ipv4Prefix, mapt.DestV4Ip, portmodifierbits, ceportrange)
 
+	// mapt customer ipv4 prefix
 	prefix, err := netip.ParsePrefix(mapt.Ipv4Prefix)
 	if err != nil {
 		panic(err)
 	}
+
+	// destination prefix
+	dpfx, err := netip.ParsePrefix(mapt.DestV4Ip)
+	if err != nil {
+		panic(err)
+	}
+
+	//compute possible destinations within provided subnet
+	for daddr := dpfx.Addr(); dpfx.Contains(daddr); daddr = daddr.Next() {
+		computedpfx = append(computedpfx, daddr)
+	}
+
 	if mapt.GenerateIncorrectRanges != true {
 		usableSports := portsPerPsid(psidoffset, psidlen, portmodifierbits)
 		// circulate through all customers IPs
@@ -268,8 +319,10 @@ func calculateRange(mapt MaptDomain) {
 				// pick a random destport
 				dport := generateRandom(1024, 65535)
 				sip := createSourceIp(mapt.MaptPrefix, psid, addr, eabitslen)
-				//dip := createDestIp(mapt.DmrPrefix, mapt.DestV4Ip)
-				fmt.Printf("SourceIP: %v, Source port: %v, destport: %v \n", sip, sport, dport)
+				// pick a random destination prefix from the computed list
+				dipfx := generateRandom(0, len(computedpfx)-1)
+				dip := createDestIp(mapt.DmrPrefix, computedpfx[dipfx])
+				fmt.Printf("SourceIP: %v, Source port: %v, Des IP: %v, Destport: %v \n", sip, sport, dip, dport)
 			}
 		}
 	} else {
