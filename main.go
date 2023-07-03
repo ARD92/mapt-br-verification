@@ -28,7 +28,7 @@ import (
 // to store packets
 var pkt = make(map[string]string)
 var pkts []map[string]string
-var v6pkts []byte
+var v6pkts [][]byte
 
 // MAP-T definition.
 type MaptDomain struct {
@@ -365,7 +365,7 @@ func calculateRange(mapt MaptDomain) {
 }
 
 // createIpv6 Packet
-func createV6Packet(pkt []map[string]string, smac string, dmac string, intf string, pkttype string) []byte {
+func createV6Packet(pkt []map[string]string, smac string, dmac string, intf string, pkttype string) [][]byte {
 	var (
 		udp    *layers.UDP
 		buffer gopacket.SerializeBuffer
@@ -389,7 +389,7 @@ func createV6Packet(pkt []map[string]string, smac string, dmac string, intf stri
 			source, _ := strconv.Atoi(pkt[i]["sourcePort"])
 			dest, _ := strconv.Atoi(pkt[i]["destPort"])
 			udp = &layers.UDP{SrcPort: layers.UDPPort(source), DstPort: layers.UDPPort(dest)}
-			protocol := layers.IPProtocolUDP
+			//protocol = layers.IPProtocolUDP
 		} else {
 			panic("source port and destination port missing. please add accordingly\n")
 		}
@@ -416,7 +416,7 @@ func createV6Packet(pkt []map[string]string, smac string, dmac string, intf stri
 }
 
 // generate and send packet
-func sendPacket(packet []byte, device string) {
+func sendPacket(packet [][]byte, device string) {
 	fmt.Println("sending packets...")
 	var snapshotlen int32 = 65535
 	var timeout = 30 * time.Second
@@ -426,9 +426,11 @@ func sendPacket(packet []byte, device string) {
 		panic(err)
 	}
 	defer handle.Close()
-	err = handle.WritePacketData(packet)
-	if err != nil {
-		panic(err)
+	for i := 0; i < 10; i++ {
+		err = handle.WritePacketData(packet[i])
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
