@@ -98,4 +98,17 @@ num of usable source ports per ce/PSID:  3969
 
 sending 1 packet per customer on interface eth1
 . Total 4095
+
+
+
+
+root@ubuntu:/opt/mapt-br-verification# tcpdump -nei ub1_map1
+tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on ub1_map1, link-type EN10MB (Ethernet), capture size 262144 bytes
+07:38:27.997484 02:aa:01:40:01:00 > 02:aa:01:10:02:01, ethertype IPv6 (0x86dd), length 71: 3010:1122:f:ff00:0:c08:aff:f.56312 > 2001:db8:1111:2222:63:6363:e400:0.63903: UDP, length 9
+07:38:28.997726 02:aa:01:40:01:00 > 02:aa:01:10:02:01, ethertype IPv6 (0x86dd), length 71: 3010:1122:f:ff00:0:c08:aff:f.56312 > 2001:db8:1111:2222:63:6363:e400:0.63903: UDP, length 9
+07:38:29.997988 02:aa:01:40:01:00 > 02:aa:01:10:02:01, ethertype IPv6 (0x86dd), length 71: 3010:1122:f:ff00:0:c08:aff:f.56312 > 2001:db8:1111:2222:63:6363:e400:0.63903: UDP, length 9
+07:38:30.998195 02:aa:01:40:01:00 > 02:aa:01:10:02:01, ethertype IPv6 (0x86dd), length 71: 3010:1122:f:ff00:0:c08:aff:f.56312 > 2001:db8:1111:2222:63:6363:e400:0.63903: UDP, length 9
+07:38:31.999031 02:aa:01:40:01:00 > 02:aa:01:10:02:01, ethertype IPv6 (0x86dd), length 71: 3010:1122:f:ff00:0:c08:aff:f.56312 > 2001:db8:1111:2222:63:6363:e400:0.63903: UDP, length 9
+
 ```
