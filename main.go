@@ -416,7 +416,7 @@ func createV6Packet(pkt []map[string]string, smac string, dmac string, intf stri
 
 // generate and send packet
 func sendPacket(packet [][]byte, device string) {
-	fmt.Printf("sending 1 packet per customer on interface %s\n. Total %d", device, len(packet)-1)
+	fmt.Printf("sending 1 packet per customer per second on interface %s\n. Total customers  %d\n", device, len(packet)-1)
 	var snapshotlen int32 = 65535
 	var timeout = 30 * time.Second
 	var promiscuous bool = false
@@ -427,6 +427,7 @@ func sendPacket(packet [][]byte, device string) {
 	defer handle.Close()
 	for i := 0; i < len(packet)-1; i++ {
 		err = handle.WritePacketData(packet[i])
+		time.Sleep(1 * time.Second)
 		if err != nil {
 			panic(err)
 		}
