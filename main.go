@@ -28,7 +28,6 @@ import (
 // to store packets
 var pkt = make(map[string]string)
 var pkts []map[string]string
-var v6pkts [][]byte
 
 // MAP-T definition.
 type MaptDomain struct {
@@ -376,6 +375,7 @@ func createV6Packet(pkt []map[string]string, smac string, dmac string, intf stri
 		dipaddr []byte
 		//protocol layers.IPProtocol
 		payload gopacket.SerializableLayer
+		v6pkts [][]byte
 	)
 
 	for i := 0; i < len(pkt); i++ {
@@ -397,13 +397,12 @@ func createV6Packet(pkt []map[string]string, smac string, dmac string, intf stri
 		smacadd, _ = net.ParseMAC(smac)
 		dmacadd, _ = net.ParseMAC(dmac)
 		if pkttype == "udp" {
-			fmt.Println(" --> IP packet with udp \n")
 			eth := &layers.Ethernet{SrcMAC: smacadd, DstMAC: dmacadd, EthernetType: 0x086DD}
 			ip := &layers.IPv6{Version: 6, DstIP: dipaddr, SrcIP: sipaddr, NextHeader: layers.IPProtocolUDP, HopLimit: 64}
 			if err := udp.SetNetworkLayerForChecksum(ip); err != nil {
 				return nil
 			}
-			buffer := gopacket.NewSerializeBuffer()
+			buffer = gopacket.NewSerializeBuffer()
 			if err := gopacket.SerializeLayers(buffer,
 				gopacket.SerializeOptions{ComputeChecksums: true, FixLengths: true},
 				eth, ip, udp, payload); err != nil {
@@ -417,7 +416,7 @@ func createV6Packet(pkt []map[string]string, smac string, dmac string, intf stri
 
 // generate and send packet
 func sendPacket(packet [][]byte, device string) {
-	fmt.Println("sending packets...")
+	fmt.Printf("sending 1 packet per customer on interface %s\n. Total %d", device, len(packet)-1)
 	var snapshotlen int32 = 65535
 	var timeout = 30 * time.Second
 	var promiscuous bool = false
@@ -426,7 +425,7 @@ func sendPacket(packet [][]byte, device string) {
 		panic(err)
 	}
 	defer handle.Close()
-	for i := 0; i < 10; i++ {
+	for i := 0; i < len(packet)-1; i++ {
 		err = handle.WritePacketData(packet[i])
 		if err != nil {
 			panic(err)
