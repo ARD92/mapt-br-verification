@@ -15,14 +15,19 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
-	"gopkg.in/yaml.v3"
-
-	//"github.com/google/gopacket"
-	//"github.com/google/gopacket/layers"
-	//"github.com/google/gopacket/pcap"
 	"os"
+
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
+	"gopkg.in/yaml.v3"
 )
+
+// to store packets
+var pkt = make(map[string]string)
+var pkts []map[string]string
 
 // MAP-T definition.
 type MaptDomain struct {
@@ -34,6 +39,10 @@ type MaptDomain struct {
 	PsidLen                 int    `yaml:"psid-len"`
 	GenerateIncorrectRanges bool   `yaml:"generate-incorrect-ranges"`
 	DestV4Ip                string `yaml:"dest-v4-ip"`
+	PktIntf                 string `yaml:"pkt-intf"`
+	Smac                    string `yaml:"smac"`
+	Dmac                    string `yaml:"dmac"`
+	PktType                 string `yaml:"pkt-type"`
 }
 
 /*
@@ -335,7 +344,11 @@ func calculateRange(mapt MaptDomain) {
 							fmt.Println("Error!!! Failed to write results to file", errs)
 						}
 					} else if os.Args[2] == "generate" {
-						fmt.Println("\nWIP: Cannot generate traffic yet!\n")
+						pkt["sourceIp"] = sip
+						pkt["destIp"] = dip
+						pkt["sourcePort"] = strconv.Itoa(sport)
+						pkt["destPort"] = strconv.Itoa(dport)
+						pkts = append(pkts, pkt)
 					} else {
 						continue
 					}
@@ -348,12 +361,78 @@ func calculateRange(mapt MaptDomain) {
 		// generate with incorrect ports/ips to drop packets
 		fmt.Println("WIP! please wait for v2.0 code")
 	}
+}
 
+// createIpv6 Packet
+func createV6Packet(pkt []map[string]string, smac string, dmac string, intf string, pkttype string) [][]byte {
+	var (
+		udp    *layers.UDP
+		buffer gopacket.SerializeBuffer
+		//icmp     *layers.ICMPv4
+		smacadd []byte
+		dmacadd []byte
+		sipaddr []byte
+		dipaddr []byte
+		//protocol layers.IPProtocol
+		payload gopacket.SerializableLayer
+		v6pkts [][]byte
+	)
+
+	for i := 0; i < len(pkt); i++ {
+		sipaddr = net.ParseIP(pkt[i]["sourceIp"])
+		dipaddr = net.ParseIP(pkt[i]["destIp"])
+		if pkttype == "icmp" {
+			fmt.Println("currently not supported. Needs enhancement")
+			//icmp = &layers.ICMPv6{TypeCode: layers.ICMPv6TypeCode(8)}
+			//protocol = layers.IPProtocolICMPv6
+		} else if pkttype == "udp" {
+			source, _ := strconv.Atoi(pkt[i]["sourcePort"])
+			dest, _ := strconv.Atoi(pkt[i]["destPort"])
+			udp = &layers.UDP{SrcPort: layers.UDPPort(source), DstPort: layers.UDPPort(dest)}
+			//protocol = layers.IPProtocolUDP
+		} else {
+			panic("source port and destination port missing. please add accordingly\n")
+		}
+		payload = gopacket.Payload("gopayload")
+		smacadd, _ = net.ParseMAC(smac)
+		dmacadd, _ = net.ParseMAC(dmac)
+		if pkttype == "udp" {
+			eth := &layers.Ethernet{SrcMAC: smacadd, DstMAC: dmacadd, EthernetType: 0x086DD}
+			ip := &layers.IPv6{Version: 6, DstIP: dipaddr, SrcIP: sipaddr, NextHeader: layers.IPProtocolUDP, HopLimit: 64}
+			if err := udp.SetNetworkLayerForChecksum(ip); err != nil {
+				return nil
+			}
+			buffer = gopacket.NewSerializeBuffer()
+			if err := gopacket.SerializeLayers(buffer,
+				gopacket.SerializeOptions{ComputeChecksums: true, FixLengths: true},
+				eth, ip, udp, payload); err != nil {
+				return nil
+			}
+		}
+		v6pkts = append(v6pkts, buffer.Bytes())
+	}
+	return v6pkts
 }
 
 // generate and send packet
-/*func sendPacket(v4Source, sourcePort, v4Dest, destPort, proto) {
-}*/
+func sendPacket(packet [][]byte, device string) {
+	fmt.Printf("sending 1 packet per customer per second on interface %s\n. Total customers  %d\n", device, len(packet)-1)
+	var snapshotlen int32 = 65535
+	var timeout = 30 * time.Second
+	var promiscuous bool = false
+	handle, err := pcap.OpenLive(device, snapshotlen, promiscuous, timeout)
+	if err != nil {
+		panic(err)
+	}
+	defer handle.Close()
+	for i := 0; i < len(packet)-1; i++ {
+		err = handle.WritePacketData(packet[i])
+		time.Sleep(1 * time.Second)
+		if err != nil {
+			panic(err)
+		}
+	}
+}
 
 func main() {
 	var mapt MaptDomain
@@ -363,8 +442,11 @@ func main() {
 	==============  MAP-T BR Verification Tool  ================
 	Version: 1.0 
 
-	Usage: ./mapt-br-verification <input.yaml> save
-	
+	Usage: 
+
+	1. ./mapt-br-verification <input.yaml> save
+	2. ./mapt-br-verification <input.yaml> generate
+
 	This will craft packets within the defined ranges such that the BR would 
 	translate. The idea is mimic a CPE device generating an IPv4 embedded Ipv6
 	address towards the BR.
@@ -389,6 +471,10 @@ func main() {
 			if len(os.Args) > 2 {
 				if os.Args[2] == "save" {
 					calculateRange(mapt)
+				} else if os.Args[2] == "generate" {
+					calculateRange(mapt)
+					pkt6 := createV6Packet(pkts, mapt.Smac, mapt.Dmac, mapt.PktIntf, mapt.PktType)
+					sendPacket(pkt6, mapt.PktIntf)
 				} else {
 					fmt.Println("\nError!!! Incorrect input, not computing. check usage under help")
 				}
