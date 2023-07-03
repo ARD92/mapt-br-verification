@@ -26,7 +26,9 @@ dest-v4-ip : "99.99.99.0/24"
 	==============  MAP-T BR Verification Tool  ================
 	Version: 1.0
 
-	Usage: ./mapt-br-verification <input.yaml> save
+	Usage: 
+    1. ./mapt-br-verification <input.yaml> save
+    2. ./mapt-br-verification <input.yaml> generate
 
 	This will craft packets within the defined ranges such that the BR would
 	translate. The idea is mimic a CPE device generating an IPv4 embedded Ipv6
