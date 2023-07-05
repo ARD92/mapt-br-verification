@@ -7,6 +7,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	//"encoding/json"
+	//"io/ioutil"
 	"os"
 
 	"github.com/google/gopacket"
@@ -24,10 +27,6 @@ import (
 	"github.com/google/gopacket/pcap"
 	"gopkg.in/yaml.v3"
 )
-
-// to store packets
-var pkt = make(map[string]string)
-var pkts []map[string]string
 
 // MAP-T definition.
 type MaptDomain struct {
@@ -250,7 +249,7 @@ Calculate number of subscribers the domain config can serve.
 This will craft all the MAP-T CE source IP addresses for
 various PSIDs
 */
-func calculateRange(mapt MaptDomain) {
+func calculateRange(mapt MaptDomain) []map[string]string {
 	var (
 		eabitslen        int
 		psidoffset       int
@@ -259,12 +258,22 @@ func calculateRange(mapt MaptDomain) {
 		ipv4suffixlen    int
 		computedpfx      []netip.Addr
 	)
+	// to store packets
+	var pkts []map[string]string
+
+	// file for source/dest IP/Port
 	file, errs := os.Create("MAPT_CE_SIP_DIP.txt")
 	if errs != nil {
-		fmt.Println("failed to create file\n")
-		return
+		panic("failed to create file\n")
 	}
 	defer file.Close()
+
+	/* file for usable ports per PSID
+	sfile, serrs := os.Create("MAPT_CE_USABLE_SOURCE_PORTS.txt")
+	if serrs != nil {
+		panic("failed to create usable source ports file\n")
+	}
+	defer sfile.Close()*/
 
 	splitip := strings.Split(mapt.Ipv4Prefix, "/")
 	subnetmask, _ := strconv.Atoi(splitip[1])
@@ -324,6 +333,13 @@ func calculateRange(mapt MaptDomain) {
 
 	if mapt.GenerateIncorrectRanges != true {
 		usableSports := portsPerPsid(psidoffset, psidlen, portmodifierbits)
+		if len(os.Args) > 2 {
+			if os.Args[2] == "save" {
+				jsonStr, _ := json.MarshalIndent(usableSports, "", "\t")
+				ioutil.WriteFile("USABLE_PORTS_PER_PSID.json", jsonStr, os.ModePerm)
+			}
+		}
+
 		// circulate through all customers IPs
 		for addr := prefix.Addr(); prefix.Contains(addr); addr = addr.Next() {
 			// circulate through customers sharing the same prefix
@@ -344,6 +360,7 @@ func calculateRange(mapt MaptDomain) {
 							fmt.Println("Error!!! Failed to write results to file", errs)
 						}
 					} else if os.Args[2] == "generate" {
+						var pkt = make(map[string]string)
 						pkt["sourceIp"] = sip
 						pkt["destIp"] = dip
 						pkt["sourcePort"] = strconv.Itoa(sport)
@@ -361,6 +378,7 @@ func calculateRange(mapt MaptDomain) {
 		// generate with incorrect ports/ips to drop packets
 		fmt.Println("WIP! please wait for v2.0 code")
 	}
+	return pkts
 }
 
 // createIpv6 Packet
@@ -375,7 +393,7 @@ func createV6Packet(pkt []map[string]string, smac string, dmac string, intf stri
 		dipaddr []byte
 		//protocol layers.IPProtocol
 		payload gopacket.SerializableLayer
-		v6pkts [][]byte
+		v6pkts  [][]byte
 	)
 
 	for i := 0; i < len(pkt); i++ {
@@ -471,8 +489,10 @@ func main() {
 			if len(os.Args) > 2 {
 				if os.Args[2] == "save" {
 					calculateRange(mapt)
+					fmt.Println("file saved")
+					return
 				} else if os.Args[2] == "generate" {
-					calculateRange(mapt)
+					pkts := calculateRange(mapt)
 					pkt6 := createV6Packet(pkts, mapt.Smac, mapt.Dmac, mapt.PktIntf, mapt.PktType)
 					sendPacket(pkt6, mapt.PktIntf)
 				} else {
