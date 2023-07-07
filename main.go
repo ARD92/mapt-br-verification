@@ -95,7 +95,6 @@ func genInterfaceId(psid int, ipv4address netip.Addr) string {
 	var iid []string
 
 	// 16bits of zeros string slice
-	//zb := make([]string, 2)
 	iid = append(iid, fmt.Sprintf("%016b", 0))
 
 	// IPv4 in binary string slice
@@ -114,6 +113,7 @@ func genInterfaceId(psid int, ipv4address netip.Addr) string {
 }
 
 // Craft source IP to mimic MAP-T CE device.This returns hex value
+// func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitlen int) string {
 func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitlen int) string {
 	var sourceip []string
 
@@ -129,7 +129,6 @@ func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitle
 		panic("unable to parse Ipv6 rule prefix")
 	}
 	ip6, _ := v6prefix.Addr().MarshalBinary()
-	//for i := 0; i < 4; i++ {
 	for _, b := range ip6 {
 		maptprefix = append(maptprefix, fmt.Sprintf("%08b", b))
 	}
@@ -152,6 +151,7 @@ func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitle
 
 	sourceip = append(sourceip, eaval[0], eaval[1], sbitval, iid)
 	sourceipjoined := strings.Join(sourceip, "")
+	fmt.Println(sourceipjoined)
 	return binaryToV6(sourceipjoined)
 }
 
@@ -207,7 +207,7 @@ func createSourcePort(psidoffset int, portmodifierbits int, psidstartval int) []
 		portlist  []int
 		startport int
 	)
-	startport = int(math.Pow(2, float64(16-psidoffset))) + psidstartval
+	startport = int(math.Pow(2, float64(16-psidoffset))-1.0) + psidstartval
 	for i := 1; i <= int(math.Pow(2, float64(psidoffset))); i++ {
 		for j := 1; j <= int(math.Pow(2, float64(portmodifierbits))); j++ {
 			portval := startport + j
@@ -228,6 +228,7 @@ ports computed into a map for each PSID
 */
 func portsPerPsid(psidoffset int, psidlen int, portmodifierbits int) map[int][]int {
 	var psidPortMap = make(map[int][]int)
+	//startval := int(math.Pow(2, float64(portmodifierbits)))
 	startval := 0
 	for i := 0; i < int(math.Pow(2, float64(psidlen))); i++ {
 		val := createSourcePort(psidoffset, portmodifierbits, startval)
@@ -242,6 +243,40 @@ Generate random value between 2 numbers
 */
 func generateRandom(min int, max int) int {
 	return rand.Intn(max-min) + min
+}
+
+/*
+validate IP addres to be network or broadcast address
+*/
+func validateIp(ipStr string, cidr string) bool {
+	ip := net.ParseIP(ipStr)
+	_, ipNet, err := net.ParseCIDR(cidr)
+	var flg bool
+	if err != nil {
+		fmt.Println("Failed to parse CIDR during IP validation\n")
+	}
+
+	if ip.Equal(ipNet.IP) {
+		fmt.Printf("%s is the network address\n", ip)
+		flg = false
+	}
+
+	broadcast := make(net.IP, len(ipNet.IP))
+	for i := 0; i < len(ipNet.IP); i++ {
+		broadcast[i] = ipNet.IP[i] | ^ipNet.Mask[i]
+	}
+
+	if ip.Equal(broadcast) {
+		fmt.Printf("%s is the broadcast address\n", ip)
+		flg = false
+	}
+
+	// Check if the IP address is a usable address
+	if !ip.Equal(ipNet.IP) && !ip.Equal(broadcast) {
+		fmt.Printf("%s is a usable address\n", ip)
+		flg = true
+	}
+	return flg
 }
 
 /*
@@ -267,13 +302,6 @@ func calculateRange(mapt MaptDomain) []map[string]string {
 		panic("failed to create file\n")
 	}
 	defer file.Close()
-
-	/* file for usable ports per PSID
-	sfile, serrs := os.Create("MAPT_CE_USABLE_SOURCE_PORTS.txt")
-	if serrs != nil {
-		panic("failed to create usable source ports file\n")
-	}
-	defer sfile.Close()*/
 
 	splitip := strings.Split(mapt.Ipv4Prefix, "/")
 	subnetmask, _ := strconv.Atoi(splitip[1])
@@ -343,36 +371,45 @@ func calculateRange(mapt MaptDomain) []map[string]string {
 		// circulate through all customers IPs
 		for addr := prefix.Addr(); prefix.Contains(addr); addr = addr.Next() {
 			// circulate through customers sharing the same prefix
-			for psid := 0; psid <= int(math.Pow(2, float64(psidlen)))-1; psid++ {
-				//pick a random port in the list of usable ports
-				sportindex := generateRandom(0, len(usableSports[psid]))
-				sport := usableSports[psid][sportindex]
-				// pick a random destport
-				dport := generateRandom(1024, 65535)
-				sip := createSourceIp(mapt.MaptPrefix, psid, addr, eabitslen)
-				// pick a random destination prefix from the computed list
-				dipfx := generateRandom(0, len(computedpfx)-1)
-				dip := createDestIp(mapt.DmrPrefix, computedpfx[dipfx])
-				if len(os.Args) > 2 {
-					if os.Args[2] == "save" {
-						_, errs = file.WriteString("Source IP: " + sip + " Destionation IP: " + dip + " Source port: " + strconv.Itoa(sport) + " Destination Port: " + strconv.Itoa(dport) + "\n")
-						if errs != nil {
-							fmt.Println("Error!!! Failed to write results to file", errs)
+			result := validateIp(addr.String(), mapt.Ipv4Prefix)
+			if result != false {
+				// staring psid 1 onwards because of validation. need to change to 0 later
+				for psid := 1; psid < int(math.Pow(2, float64(psidlen))); psid++ {
+					//fmt.Println(addr)
+					//pick a random port in the list of usable ports
+					sportindex := generateRandom(0, len(usableSports[psid]))
+					sport := usableSports[psid][sportindex]
+					// pick a random destport
+					dport := generateRandom(1024, 65535)
+					sip := createSourceIp(mapt.MaptPrefix, psid, addr, eabitslen)
+					// pick a random destination prefix from the computed list
+					dipfx := generateRandom(0, len(computedpfx)-1)
+					dip := createDestIp(mapt.DmrPrefix, computedpfx[dipfx])
+					if len(os.Args) > 2 {
+						if os.Args[2] == "save" {
+							_, errs = file.WriteString("Source IP: " + sip + " Destionation IP: " + dip + " Source port: " + strconv.Itoa(sport) + " Destination Port: " + strconv.Itoa(dport) + "\n")
+							if errs != nil {
+								fmt.Println("Error!!! Failed to write results to file", errs)
+							}
+						} else if os.Args[2] == "generate" {
+							var pkt = make(map[string]string)
+							pkt["sourceIp"] = sip
+							pkt["destIp"] = dip
+							pkt["sourcePort"] = strconv.Itoa(sport)
+							pkt["destPort"] = strconv.Itoa(dport)
+							pkts = append(pkts, pkt)
+						} else {
+							continue
 						}
-					} else if os.Args[2] == "generate" {
-						var pkt = make(map[string]string)
-						pkt["sourceIp"] = sip
-						pkt["destIp"] = dip
-						pkt["sourcePort"] = strconv.Itoa(sport)
-						pkt["destPort"] = strconv.Itoa(dport)
-						pkts = append(pkts, pkt)
 					} else {
 						continue
 					}
-				} else {
-					continue
 				}
+			} else {
+				fmt.Println("skipping addressing.. \n")
+				continue
 			}
+			//validate if address is network or host
 		}
 	} else {
 		// generate with incorrect ports/ips to drop packets
