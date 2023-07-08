@@ -110,5 +110,27 @@ listening on ub1_map1, link-type EN10MB (Ethernet), capture size 262144 bytes
 07:38:29.997988 02:aa:01:40:01:00 > 02:aa:01:10:02:01, ethertype IPv6 (0x86dd), length 71: 3010:1122:f:ff00:0:c08:aff:f.56312 > 2001:db8:1111:2222:63:6363:e400:0.63903: UDP, length 9
 07:38:30.998195 02:aa:01:40:01:00 > 02:aa:01:10:02:01, ethertype IPv6 (0x86dd), length 71: 3010:1122:f:ff00:0:c08:aff:f.56312 > 2001:db8:1111:2222:63:6363:e400:0.63903: UDP, length 9
 07:38:31.999031 02:aa:01:40:01:00 > 02:aa:01:10:02:01, ethertype IPv6 (0x86dd), length 71: 3010:1122:f:ff00:0:c08:aff:f.56312 > 2001:db8:1111:2222:63:6363:e400:0.63903: UDP, length 9
+```
 
+### Validating the above on vMX
+
+```
+root@map1# run show services inline softwire statistics mapt
+
+ Service PIC Name                                    si-0/0/0
+
+ Control Plane Statistics
+     MAPT ICMPv6 translated to ICMPv4                   0
+     MAPT ICMPv4 translated to ICMPv6                   0
+     MAPT ICMPv4 discards                               0
+     MAPT ICMPv6 discards                               0
+
+ Data Plane Statistics (v6-to-v4)      Packets                 Bytes
+     MAPT v6 translated to v4           11555                   658635
+     MAPT v6 spoof drops                460                     26220
+     MAPT v6 fragment drops             0                       0
+     MAPT v6 unsupported drops          0                       0
+
+ Data Plane Statistics (v4-to-v6)      Packets                 Bytes
+     MAPT v4 translated to v6           0                       0
 ```
