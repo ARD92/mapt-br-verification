@@ -1,0 +1,17 @@
+---
+dmr-prefix : "2001:db8:1111:2222::/64"
+mapt-prefix: "3010:1122:1100::/44"
+eabits-len: 12
+ipv4-prefix: "12.8.10.0/24"
+psid-offset: 6
+psid-len : 4
+#value set to "true" would craft packets that intentionally fall out of the permissible port ranges and hence BR should not translate it.
+generate-incorrect-ranges: false 
+# This would pick a destination address from the subnet block and randomly generate a packet towards it.
+dest-v4-ip : "99.99.99.0/24"
+# pkt-intf is the interface over which the generated packets will be sent
+pkt-intf : "eth1"
+smac : "02:aa:01:40:01:00"
+dmac : "02:aa:01:10:02:01"
+# pkt-type can be udp or icmp
+pkt-type: "udp"

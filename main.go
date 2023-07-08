@@ -7,6 +7,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	//"encoding/json"
+	//"io/ioutil"
 	"os"
 
 	"github.com/google/gopacket"
@@ -24,10 +27,6 @@ import (
 	"github.com/google/gopacket/pcap"
 	"gopkg.in/yaml.v3"
 )
-
-// to store packets
-var pkt = make(map[string]string)
-var pkts []map[string]string
 
 // MAP-T definition.
 type MaptDomain struct {
@@ -96,7 +95,6 @@ func genInterfaceId(psid int, ipv4address netip.Addr) string {
 	var iid []string
 
 	// 16bits of zeros string slice
-	//zb := make([]string, 2)
 	iid = append(iid, fmt.Sprintf("%016b", 0))
 
 	// IPv4 in binary string slice
@@ -114,8 +112,28 @@ func genInterfaceId(psid int, ipv4address netip.Addr) string {
 	return strings.Join(iid, "")
 }
 
-// Craft source IP to mimic MAP-T CE device.This returns hex value
-func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitlen int) string {
+/*
+Craft source IP to mimic MAP-T CE device.
+
+	  |        32 bits           |         |    16 bits        |
+	   +--------------------------+         +-------------------+
+	   | IPv4 destination address |         |  IPv4 dest port   |
+	   +--------------------------+         +-------------------+
+	                   :          :           ___/       :
+	                   | p bits   |          /  q bits   :
+	                   +----------+         +------------+
+	                   |IPv4  sufx|         |Port-Set ID |
+	                   +----------+         +------------+
+	                   \          /  _______/    ________/
+	                    \        / _/ __________/
+	                     \      : /  /
+	|     n bits         |  o bits   | s bits  |   128-n-o-s bits      |
+	+--------------------+-----------+---------+------------+----------+
+	|  Rule IPv6 prefix  |  EA bits  |subnet ID|     interface ID      |
+	+--------------------+-----------+---------+-----------------------+
+	|<---  End-user IPv6 prefix  --->|
+*/
+func createSourceIp(ruleprefix string, psid int, psidlen int, ipv4address netip.Addr, eabitlen int) string {
 	var sourceip []string
 
 	iid := genInterfaceId(psid, ipv4address)
@@ -130,7 +148,6 @@ func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitle
 		panic("unable to parse Ipv6 rule prefix")
 	}
 	ip6, _ := v6prefix.Addr().MarshalBinary()
-	//for i := 0; i < 4; i++ {
 	for _, b := range ip6 {
 		maptprefix = append(maptprefix, fmt.Sprintf("%08b", b))
 	}
@@ -139,10 +156,14 @@ func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitle
 
 	//create eabits
 	var eaval []string
+	strpsid := strconv.Itoa(psidlen)
 	bpsid := strconv.FormatInt(int64(psid), 2)
-	suffixlen := eabitlen - len(bpsid)
+	padbpsid := fmt.Sprintf("%0"+strpsid+"s", bpsid)
+
+	// need to append 0s to match length of psid
+	suffixlen := eabitlen - psidlen
 	suffixval := iid[16+(32-suffixlen) : 48]
-	eaval = append(eaval, suffixval, bpsid)
+	eaval = append(eaval, suffixval, padbpsid)
 
 	// calculate 0s to pad
 	sbits := 64 - rulesubnet - eabitlen
@@ -157,7 +178,7 @@ func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitle
 }
 
 /*
-Craft destination IP to mimic MAP-T CE device. This returns hex value
+Craft destination IP to mimic MAP-T CE device.
 <---------- 64 ------------>< 8 ><----- 32 -----><--- 24 --->
 +--------------------------+----+---------------+-----------+
 |        BR prefix         | u  | IPv4 address  |     0     |
@@ -170,6 +191,10 @@ func createDestIp(dmrprefix string, destip netip.Addr) string {
 
 	splitmapt := strings.Split(dmrprefix, "/")
 	dmrsubnet, _ := strconv.Atoi(splitmapt[1])
+
+	if dmrsubnet != 64 {
+		panic("only DMR prefix of /64 is supported currently!")
+	}
 	v6prefix, err := netip.ParsePrefix(dmrprefix)
 	if err != nil {
 		panic("unable to parse Ipv6 rule prefix")
@@ -208,7 +233,7 @@ func createSourcePort(psidoffset int, portmodifierbits int, psidstartval int) []
 		portlist  []int
 		startport int
 	)
-	startport = int(math.Pow(2, float64(16-psidoffset))) + psidstartval
+	startport = int(math.Pow(2, float64(16-psidoffset))-1.0) + psidstartval
 	for i := 1; i <= int(math.Pow(2, float64(psidoffset))); i++ {
 		for j := 1; j <= int(math.Pow(2, float64(portmodifierbits))); j++ {
 			portval := startport + j
@@ -229,6 +254,7 @@ ports computed into a map for each PSID
 */
 func portsPerPsid(psidoffset int, psidlen int, portmodifierbits int) map[int][]int {
 	var psidPortMap = make(map[int][]int)
+	//startval := int(math.Pow(2, float64(portmodifierbits)))
 	startval := 0
 	for i := 0; i < int(math.Pow(2, float64(psidlen))); i++ {
 		val := createSourcePort(psidoffset, portmodifierbits, startval)
@@ -246,11 +272,45 @@ func generateRandom(min int, max int) int {
 }
 
 /*
+validate IP addres to be network or broadcast address
+*/
+func validateIp(ipStr string, cidr string) bool {
+	ip := net.ParseIP(ipStr)
+	_, ipNet, err := net.ParseCIDR(cidr)
+	var flg bool
+	if err != nil {
+		panic("Failed to parse CIDR during IP validation\n")
+	}
+
+	if ip.Equal(ipNet.IP) {
+		//fmt.Printf("%s is the network address\n", ip)
+		flg = false
+	}
+
+	broadcast := make(net.IP, len(ipNet.IP))
+	for i := 0; i < len(ipNet.IP); i++ {
+		broadcast[i] = ipNet.IP[i] | ^ipNet.Mask[i]
+	}
+
+	if ip.Equal(broadcast) {
+		//fmt.Printf("%s is the broadcast address\n", ip)
+		flg = false
+	}
+
+	// Check if the IP address is a usable address
+	if !ip.Equal(ipNet.IP) && !ip.Equal(broadcast) {
+		//fmt.Printf("%s is a usable address\n", ip)
+		flg = true
+	}
+	return flg
+}
+
+/*
 Calculate number of subscribers the domain config can serve.
 This will craft all the MAP-T CE source IP addresses for
 various PSIDs
 */
-func calculateRange(mapt MaptDomain) {
+func calculateRange(mapt MaptDomain) []map[string]string {
 	var (
 		eabitslen        int
 		psidoffset       int
@@ -259,10 +319,13 @@ func calculateRange(mapt MaptDomain) {
 		ipv4suffixlen    int
 		computedpfx      []netip.Addr
 	)
+	// to store packets
+	var pkts []map[string]string
+
+	// file for source/dest IP/Port
 	file, errs := os.Create("MAPT_CE_SIP_DIP.txt")
 	if errs != nil {
-		fmt.Println("failed to create file\n")
-		return
+		panic("failed to create file\n")
 	}
 	defer file.Close()
 
@@ -324,43 +387,60 @@ func calculateRange(mapt MaptDomain) {
 
 	if mapt.GenerateIncorrectRanges != true {
 		usableSports := portsPerPsid(psidoffset, psidlen, portmodifierbits)
+		if len(os.Args) > 2 {
+			if os.Args[2] == "save" {
+				jsonStr, _ := json.MarshalIndent(usableSports, "", "\t")
+				ioutil.WriteFile("USABLE_PORTS_PER_PSID.json", jsonStr, os.ModePerm)
+			}
+		}
+
 		// circulate through all customers IPs
 		for addr := prefix.Addr(); prefix.Contains(addr); addr = addr.Next() {
 			// circulate through customers sharing the same prefix
-			for psid := 0; psid <= int(math.Pow(2, float64(psidlen)))-1; psid++ {
-				//pick a random port in the list of usable ports
-				sportindex := generateRandom(0, len(usableSports[psid]))
-				sport := usableSports[psid][sportindex]
-				// pick a random destport
-				dport := generateRandom(1024, 65535)
-				sip := createSourceIp(mapt.MaptPrefix, psid, addr, eabitslen)
-				// pick a random destination prefix from the computed list
-				dipfx := generateRandom(0, len(computedpfx)-1)
-				dip := createDestIp(mapt.DmrPrefix, computedpfx[dipfx])
-				if len(os.Args) > 2 {
-					if os.Args[2] == "save" {
-						_, errs = file.WriteString("Source IP: " + sip + " Destionation IP: " + dip + " Source port: " + strconv.Itoa(sport) + " Destination Port: " + strconv.Itoa(dport) + "\n")
-						if errs != nil {
-							fmt.Println("Error!!! Failed to write results to file", errs)
+			result := validateIp(addr.String(), mapt.Ipv4Prefix)
+			if result != false {
+				// staring psid 1 onwards because of validation. need to change to 0 later
+				for psid := 1; psid < int(math.Pow(2, float64(psidlen))); psid++ {
+					//pick a random port in the list of usable ports
+					sportindex := generateRandom(0, len(usableSports[psid]))
+					sport := usableSports[psid][sportindex]
+					// pick a random destport
+					dport := generateRandom(1024, 65535)
+					sip := createSourceIp(mapt.MaptPrefix, psid, psidlen, addr, eabitslen)
+					// pick a random destination prefix from the computed list
+					dipfx := generateRandom(0, len(computedpfx)-1)
+					dip := createDestIp(mapt.DmrPrefix, computedpfx[dipfx])
+					if len(os.Args) > 2 {
+						if os.Args[2] == "save" {
+							_, errs = file.WriteString("Source IP: " + sip + " Destionation IP: " + dip + " Source port: " + strconv.Itoa(sport) + " Destination Port: " + strconv.Itoa(dport) + "\n")
+							if errs != nil {
+								fmt.Println("Error!!! Failed to write results to file", errs)
+							}
+						} else if os.Args[2] == "generate" {
+							var pkt = make(map[string]string)
+							pkt["sourceIp"] = sip
+							pkt["destIp"] = dip
+							pkt["sourcePort"] = strconv.Itoa(sport)
+							pkt["destPort"] = strconv.Itoa(dport)
+							pkts = append(pkts, pkt)
+						} else {
+							continue
 						}
-					} else if os.Args[2] == "generate" {
-						pkt["sourceIp"] = sip
-						pkt["destIp"] = dip
-						pkt["sourcePort"] = strconv.Itoa(sport)
-						pkt["destPort"] = strconv.Itoa(dport)
-						pkts = append(pkts, pkt)
 					} else {
 						continue
 					}
-				} else {
-					continue
 				}
+			} else {
+				//fmt.Println("skipping addressing.. \n")
+				continue
 			}
+			//validate if address is network or host
 		}
 	} else {
 		// generate with incorrect ports/ips to drop packets
 		fmt.Println("WIP! please wait for v2.0 code")
 	}
+	return pkts
 }
 
 // createIpv6 Packet
@@ -375,7 +455,7 @@ func createV6Packet(pkt []map[string]string, smac string, dmac string, intf stri
 		dipaddr []byte
 		//protocol layers.IPProtocol
 		payload gopacket.SerializableLayer
-		v6pkts [][]byte
+		v6pkts  [][]byte
 	)
 
 	for i := 0; i < len(pkt); i++ {
@@ -471,8 +551,10 @@ func main() {
 			if len(os.Args) > 2 {
 				if os.Args[2] == "save" {
 					calculateRange(mapt)
+					fmt.Println("file saved")
+					return
 				} else if os.Args[2] == "generate" {
-					calculateRange(mapt)
+					pkts := calculateRange(mapt)
 					pkt6 := createV6Packet(pkts, mapt.Smac, mapt.Dmac, mapt.PktIntf, mapt.PktType)
 					sendPacket(pkt6, mapt.PktIntf)
 				} else {
