@@ -112,9 +112,28 @@ func genInterfaceId(psid int, ipv4address netip.Addr) string {
 	return strings.Join(iid, "")
 }
 
-// Craft source IP to mimic MAP-T CE device.This returns hex value
-// func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitlen int) string {
-func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitlen int) string {
+/*
+Craft source IP to mimic MAP-T CE device.
+
+	  |        32 bits           |         |    16 bits        |
+	   +--------------------------+         +-------------------+
+	   | IPv4 destination address |         |  IPv4 dest port   |
+	   +--------------------------+         +-------------------+
+	                   :          :           ___/       :
+	                   | p bits   |          /  q bits   :
+	                   +----------+         +------------+
+	                   |IPv4  sufx|         |Port-Set ID |
+	                   +----------+         +------------+
+	                   \          /  _______/    ________/
+	                    \        / _/ __________/
+	                     \      : /  /
+	|     n bits         |  o bits   | s bits  |   128-n-o-s bits      |
+	+--------------------+-----------+---------+------------+----------+
+	|  Rule IPv6 prefix  |  EA bits  |subnet ID|     interface ID      |
+	+--------------------+-----------+---------+-----------------------+
+	|<---  End-user IPv6 prefix  --->|
+*/
+func createSourceIp(ruleprefix string, psid int, psidlen int, ipv4address netip.Addr, eabitlen int) string {
 	var sourceip []string
 
 	iid := genInterfaceId(psid, ipv4address)
@@ -137,10 +156,14 @@ func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitle
 
 	//create eabits
 	var eaval []string
+	strpsid := strconv.Itoa(psidlen)
 	bpsid := strconv.FormatInt(int64(psid), 2)
-	suffixlen := eabitlen - len(bpsid)
+	padbpsid := fmt.Sprintf("%0"+strpsid+"s", bpsid)
+
+	// need to append 0s to match length of psid
+	suffixlen := eabitlen - psidlen
 	suffixval := iid[16+(32-suffixlen) : 48]
-	eaval = append(eaval, suffixval, bpsid)
+	eaval = append(eaval, suffixval, padbpsid)
 
 	// calculate 0s to pad
 	sbits := 64 - rulesubnet - eabitlen
@@ -151,12 +174,11 @@ func createSourceIp(ruleprefix string, psid int, ipv4address netip.Addr, eabitle
 
 	sourceip = append(sourceip, eaval[0], eaval[1], sbitval, iid)
 	sourceipjoined := strings.Join(sourceip, "")
-	fmt.Println(sourceipjoined)
 	return binaryToV6(sourceipjoined)
 }
 
 /*
-Craft destination IP to mimic MAP-T CE device. This returns hex value
+Craft destination IP to mimic MAP-T CE device.
 <---------- 64 ------------>< 8 ><----- 32 -----><--- 24 --->
 +--------------------------+----+---------------+-----------+
 |        BR prefix         | u  | IPv4 address  |     0     |
@@ -169,6 +191,10 @@ func createDestIp(dmrprefix string, destip netip.Addr) string {
 
 	splitmapt := strings.Split(dmrprefix, "/")
 	dmrsubnet, _ := strconv.Atoi(splitmapt[1])
+
+	if dmrsubnet != 64 {
+		panic("only DMR prefix of /64 is supported currently!")
+	}
 	v6prefix, err := netip.ParsePrefix(dmrprefix)
 	if err != nil {
 		panic("unable to parse Ipv6 rule prefix")
@@ -253,11 +279,11 @@ func validateIp(ipStr string, cidr string) bool {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	var flg bool
 	if err != nil {
-		fmt.Println("Failed to parse CIDR during IP validation\n")
+		panic("Failed to parse CIDR during IP validation\n")
 	}
 
 	if ip.Equal(ipNet.IP) {
-		fmt.Printf("%s is the network address\n", ip)
+		//fmt.Printf("%s is the network address\n", ip)
 		flg = false
 	}
 
@@ -267,13 +293,13 @@ func validateIp(ipStr string, cidr string) bool {
 	}
 
 	if ip.Equal(broadcast) {
-		fmt.Printf("%s is the broadcast address\n", ip)
+		//fmt.Printf("%s is the broadcast address\n", ip)
 		flg = false
 	}
 
 	// Check if the IP address is a usable address
 	if !ip.Equal(ipNet.IP) && !ip.Equal(broadcast) {
-		fmt.Printf("%s is a usable address\n", ip)
+		//fmt.Printf("%s is a usable address\n", ip)
 		flg = true
 	}
 	return flg
@@ -375,13 +401,12 @@ func calculateRange(mapt MaptDomain) []map[string]string {
 			if result != false {
 				// staring psid 1 onwards because of validation. need to change to 0 later
 				for psid := 1; psid < int(math.Pow(2, float64(psidlen))); psid++ {
-					//fmt.Println(addr)
 					//pick a random port in the list of usable ports
 					sportindex := generateRandom(0, len(usableSports[psid]))
 					sport := usableSports[psid][sportindex]
 					// pick a random destport
 					dport := generateRandom(1024, 65535)
-					sip := createSourceIp(mapt.MaptPrefix, psid, addr, eabitslen)
+					sip := createSourceIp(mapt.MaptPrefix, psid, psidlen, addr, eabitslen)
 					// pick a random destination prefix from the computed list
 					dipfx := generateRandom(0, len(computedpfx)-1)
 					dip := createDestIp(mapt.DmrPrefix, computedpfx[dipfx])
@@ -406,7 +431,7 @@ func calculateRange(mapt MaptDomain) []map[string]string {
 					}
 				}
 			} else {
-				fmt.Println("skipping addressing.. \n")
+				//fmt.Println("skipping addressing.. \n")
 				continue
 			}
 			//validate if address is network or host
