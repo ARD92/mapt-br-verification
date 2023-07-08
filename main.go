@@ -382,7 +382,10 @@ func calculateRange(mapt MaptDomain) []map[string]string {
 
 	//compute possible destinations within provided subnet
 	for daddr := dpfx.Addr(); dpfx.Contains(daddr); daddr = daddr.Next() {
-		computedpfx = append(computedpfx, daddr)
+		result := validateIp(daddr.String(), mapt.DestV4Ip)
+		if result != false {
+			computedpfx = append(computedpfx, daddr)
+		}
 	}
 
 	if mapt.GenerateIncorrectRanges != true {
@@ -400,7 +403,7 @@ func calculateRange(mapt MaptDomain) []map[string]string {
 			result := validateIp(addr.String(), mapt.Ipv4Prefix)
 			if result != false {
 				// staring psid 1 onwards because of validation. need to change to 0 later
-				for psid := 1; psid < int(math.Pow(2, float64(psidlen))); psid++ {
+				for psid := 0; psid < int(math.Pow(2, float64(psidlen))); psid++ {
 					//pick a random port in the list of usable ports
 					sportindex := generateRandom(0, len(usableSports[psid]))
 					sport := usableSports[psid][sportindex]

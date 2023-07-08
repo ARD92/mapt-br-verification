@@ -100,8 +100,6 @@ sending 1 packet per customer on interface eth1
 . Total 4095
 
 
-
-
 root@ubuntu:/opt/mapt-br-verification# tcpdump -nei ub1_map1
 tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
 listening on ub1_map1, link-type EN10MB (Ethernet), capture size 262144 bytes
@@ -114,6 +112,38 @@ listening on ub1_map1, link-type EN10MB (Ethernet), capture size 262144 bytes
 
 ### Validating the above on vMX
 
+### Configure MAP-T
+```
+set services service-set sset1 softwire-rules sw-rule1
+set services service-set sset1 softwire-rules sw-rule2
+
+set services service-set sset1 next-hop-service inside-service-interface si-0/0/0.1
+set services service-set sset1 next-hop-service outside-service-interface si-0/0/0.2
+
+set services softwire softwire-concentrator map-t mapt-domain-1 dmr-prefix 2001:db8:1111:2222::/64
+set services softwire softwire-concentrator map-t mapt-domain-1 ipv4-prefix 12.8.10.0/24
+set services softwire softwire-concentrator map-t mapt-domain-1 mapt-prefix 3010:1122:1100::/44
+set services softwire softwire-concentrator map-t mapt-domain-1 ea-bits-len 12
+set services softwire softwire-concentrator map-t mapt-domain-1 psid-offset 6
+set services softwire softwire-concentrator map-t mapt-domain-1 psid-length 4
+set services softwire softwire-concentrator map-t mapt-domain-1 mtu-v6 9192
+
+set services softwire softwire-concentrator map-t mapt-domain-2 dmr-prefix 2001:db8:ffff:ffff::/64
+set services softwire softwire-concentrator map-t mapt-domain-2 ipv4-prefix 100.99.99.0/24
+set services softwire softwire-concentrator map-t mapt-domain-2 mapt-prefix 3001:db8:ffff::/48
+set services softwire softwire-concentrator map-t mapt-domain-2 ea-bits-len 14
+set services softwire softwire-concentrator map-t mapt-domain-2 psid-offset 6
+set services softwire softwire-concentrator map-t mapt-domain-2 psid-length 6
+set services softwire softwire-concentrator map-t mapt-domain-2 mtu-v6 9192
+
+set services softwire rule sw-rule1 match-direction input
+set services softwire rule sw-rule1 term t1 then map-t mapt-domain-1
+
+set services softwire rule sw-rule2 match-direction input
+set services softwire rule sw-rule2 term t1 then map-t mapt-domain-2
+```
+
+### View statistics 
 ```
 root@map1# run show services inline softwire statistics mapt
 
@@ -133,4 +163,30 @@ root@map1# run show services inline softwire statistics mapt
 
  Data Plane Statistics (v4-to-v6)      Packets                 Bytes
      MAPT v4 translated to v6           0                       0
+```
+
+### View converted IPv4 address
+Add a firewall filter in output direction on interface facing internet . Once Ipv6 routes are translated, they will exit over this 
+
+#### Configuration
+```
+root@map1# show interfaces lt-0/0/10.12 | display set
+set interfaces lt-0/0/10 unit 12 encapsulation ethernet
+set interfaces lt-0/0/10 unit 12 peer-unit 13
+set interfaces lt-0/0/10 unit 12 family inet filter output COUNT-INPUT
+set interfaces lt-0/0/10 unit 12 family inet address 17.1.1.1/30
+
+set firewall family inet filter COUNT-INPUT term 10 then count COUNT-INPUT
+set firewall family inet filter COUNT-INPUT term 10 then log
+set firewall family inet filter COUNT-INPUT term 10 then accep
+```
+
+#### Filter stats once converted
+```
+Time      Filter    Action Interface           Protocol        Src Addr                         Dest Addr
+20:04:40  pfe       A      lo0.0               UDP             12.8.10.46                       99.99.99.49
+20:04:39  pfe       A      lo0.0               UDP             12.8.10.46                       99.99.99.27
+20:04:38  pfe       A      lo0.0               UDP             12.8.10.46                       99.99.99.41
+20:04:37  pfe       A      lo0.0               UDP             12.8.10.46                       99.99.99.137
+20:04:36  pfe       A      lo0.0               UDP             12.8.10.46                       99.99.99.172
 ```
