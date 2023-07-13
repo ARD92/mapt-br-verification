@@ -1,5 +1,5 @@
 /* Author: Aravind Prabhakar
-   Version: 0.1
+   Version: 1.1
    Description: This app generates IPv6 packets with embedded v4 host addresses with permissible source ports
    to validate BR functionality. Creates IPv6 packets mimicing MAP-T CE functionality
 */
@@ -14,13 +14,10 @@ import (
 	"math/rand"
 	"net"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 	"time"
-
-	//"encoding/json"
-	//"io/ioutil"
-	"os"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -254,7 +251,6 @@ ports computed into a map for each PSID
 */
 func portsPerPsid(psidoffset int, psidlen int, portmodifierbits int) map[int][]int {
 	var psidPortMap = make(map[int][]int)
-	//startval := int(math.Pow(2, float64(portmodifierbits)))
 	startval := 0
 	for i := 0; i < int(math.Pow(2, float64(psidlen))); i++ {
 		val := createSourcePort(psidoffset, portmodifierbits, startval)
@@ -306,6 +302,25 @@ func validateIp(ipStr string, cidr string) bool {
 }
 
 /*
+Generate an unusable port for a particular PSID
+This will be used to generate spoof errors
+*/
+
+func unUsablePorts(usablePorts map[int][]int, psid int) int {
+	var sport int
+	port := generateRandom(1024, 65535)
+	for i := 0; i < len(usablePorts[psid]); i++ {
+		if port != usablePorts[psid][i] {
+			sport = port
+			break
+		} else {
+			unUsablePorts(usablePorts, psid)
+		}
+	}
+	return sport
+}
+
+/*
 Calculate number of subscribers the domain config can serve.
 This will craft all the MAP-T CE source IP addresses for
 various PSIDs
@@ -333,13 +348,12 @@ func calculateRange(mapt MaptDomain) []map[string]string {
 	subnetmask, _ := strconv.Atoi(splitip[1])
 	ipv4suffixlen = 32 - subnetmask
 
-	// handle eabitlen
 	if mapt.EaBitsLen != 0 {
 		eabitslen = mapt.EaBitsLen
 	} else {
 		panic("Ea bits not set. Please set this and retry!")
 	}
-	// handle offset
+
 	if mapt.PsidOffset != 0 {
 		if mapt.PsidOffset < 6 {
 			fmt.Println("Warning! this may unblock 0-1023 ports. you may want to set offset to 6 which is default")
@@ -350,7 +364,7 @@ func calculateRange(mapt MaptDomain) []map[string]string {
 		//set default to 6
 		psidoffset = 6
 	}
-	// handle psid
+
 	if mapt.PsidLen != 0 {
 		if mapt.PsidLen != eabitslen-ipv4suffixlen {
 			panic("Ea bit length mismatch. Length of Ea bits should be len of v4Suffix + len of PSID.\n validate EabitLen and PsidLen")
@@ -368,13 +382,11 @@ func calculateRange(mapt MaptDomain) []map[string]string {
 	// print inputs before starting traffic
 	printInputs(mapt.DmrPrefix, mapt.MaptPrefix, psidoffset, psidlen, mapt.Ipv4Prefix, mapt.DestV4Ip, portmodifierbits, ceportrange)
 
-	// mapt customer ipv4 prefix
 	prefix, err := netip.ParsePrefix(mapt.Ipv4Prefix)
 	if err != nil {
 		panic(err)
 	}
 
-	// destination prefix
 	dpfx, err := netip.ParsePrefix(mapt.DestV4Ip)
 	if err != nil {
 		panic(err)
@@ -388,60 +400,59 @@ func calculateRange(mapt MaptDomain) []map[string]string {
 		}
 	}
 
-	if mapt.GenerateIncorrectRanges != true {
-		usableSports := portsPerPsid(psidoffset, psidlen, portmodifierbits)
-		if len(os.Args) > 2 {
-			if os.Args[2] == "save" {
-				jsonStr, _ := json.MarshalIndent(usableSports, "", "\t")
-				ioutil.WriteFile("USABLE_PORTS_PER_PSID.json", jsonStr, os.ModePerm)
-			}
+	usableSports := portsPerPsid(psidoffset, psidlen, portmodifierbits)
+	if len(os.Args) > 2 {
+		if os.Args[2] == "save" {
+			jsonStr, _ := json.MarshalIndent(usableSports, "", "\t")
+			ioutil.WriteFile("USABLE_PORTS_PER_PSID.json", jsonStr, os.ModePerm)
 		}
+	}
 
-		// circulate through all customers IPs
-		for addr := prefix.Addr(); prefix.Contains(addr); addr = addr.Next() {
-			// circulate through customers sharing the same prefix
-			result := validateIp(addr.String(), mapt.Ipv4Prefix)
-			if result != false {
-				// staring psid 1 onwards because of validation. need to change to 0 later
-				for psid := 0; psid < int(math.Pow(2, float64(psidlen))); psid++ {
+	// circulate through all customer IPV4 IPs
+	for addr := prefix.Addr(); prefix.Contains(addr); addr = addr.Next() {
+		// circulate through customers sharing the same IPV4 address
+		result := validateIp(addr.String(), mapt.Ipv4Prefix)
+		if result != false {
+			for psid := 0; psid < int(math.Pow(2, float64(psidlen))); psid++ {
+				var sport int
+				if mapt.GenerateIncorrectRanges != true {
 					//pick a random port in the list of usable ports
 					sportindex := generateRandom(0, len(usableSports[psid]))
-					sport := usableSports[psid][sportindex]
-					// pick a random destport
-					dport := generateRandom(1024, 65535)
-					sip := createSourceIp(mapt.MaptPrefix, psid, psidlen, addr, eabitslen)
-					// pick a random destination prefix from the computed list
-					dipfx := generateRandom(0, len(computedpfx)-1)
-					dip := createDestIp(mapt.DmrPrefix, computedpfx[dipfx])
-					if len(os.Args) > 2 {
-						if os.Args[2] == "save" {
-							_, errs = file.WriteString("Source IP: " + sip + " Destionation IP: " + dip + " Source port: " + strconv.Itoa(sport) + " Destination Port: " + strconv.Itoa(dport) + "\n")
-							if errs != nil {
-								fmt.Println("Error!!! Failed to write results to file", errs)
-							}
-						} else if os.Args[2] == "generate" {
-							var pkt = make(map[string]string)
-							pkt["sourceIp"] = sip
-							pkt["destIp"] = dip
-							pkt["sourcePort"] = strconv.Itoa(sport)
-							pkt["destPort"] = strconv.Itoa(dport)
-							pkts = append(pkts, pkt)
-						} else {
-							continue
+					sport = usableSports[psid][sportindex]
+				} else {
+					// generate unusable port for spoofing
+					port := unUsablePorts(usableSports, psid)
+					sport = port
+				}
+				// pick a random destport
+				dport := generateRandom(1024, 65535)
+				sip := createSourceIp(mapt.MaptPrefix, psid, psidlen, addr, eabitslen)
+				// pick a random destination prefix from the computed list
+				dipfx := generateRandom(0, len(computedpfx)-1)
+				dip := createDestIp(mapt.DmrPrefix, computedpfx[dipfx])
+				if len(os.Args) > 2 {
+					if os.Args[2] == "save" {
+						_, errs = file.WriteString("Source IP: " + sip + " Destionation IP: " + dip + " Source port: " + strconv.Itoa(sport) + " Destination Port: " + strconv.Itoa(dport) + "\n")
+						if errs != nil {
+							fmt.Println("Error!!! Failed to write results to file", errs)
 						}
+					} else if os.Args[2] == "generate" {
+						var pkt = make(map[string]string)
+						pkt["sourceIp"] = sip
+						pkt["destIp"] = dip
+						pkt["sourcePort"] = strconv.Itoa(sport)
+						pkt["destPort"] = strconv.Itoa(dport)
+						pkts = append(pkts, pkt)
 					} else {
 						continue
 					}
+				} else {
+					continue
 				}
-			} else {
-				//fmt.Println("skipping addressing.. \n")
-				continue
 			}
-			//validate if address is network or host
+		} else {
+			continue
 		}
-	} else {
-		// generate with incorrect ports/ips to drop packets
-		fmt.Println("WIP! please wait for v2.0 code")
 	}
 	return pkts
 }
@@ -523,7 +534,7 @@ func main() {
 		if (os.Args[1] == "help") || (os.Args[1] == "--help") {
 			fmt.Printf(`
 	==============  MAP-T BR Verification Tool  ================
-	Version: 1.0 
+	Version: 1.1 
 
 	Usage: 
 

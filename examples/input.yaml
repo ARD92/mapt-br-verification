@@ -1,12 +1,12 @@
 ---
 dmr-prefix : "2001:db8:1111:2222::/64"
 mapt-prefix: "3010:1122:1100::/44"
-eabits-len: 12
-ipv4-prefix: "12.8.10.0/24"
+eabits-len: 15
+ipv4-prefix: "12.8.0.0/21"
 psid-offset: 6
 psid-len : 4
 #value set to "true" would craft packets that intentionally fall out of the permissible port ranges and hence BR should not translate it.
-generate-incorrect-ranges: false 
+generate-incorrect-ranges: true
 # This would pick a destination address from the subnet block and randomly generate a packet towards it.
 dest-v4-ip : "99.99.99.0/24"
 # pkt-intf is the interface over which the generated packets will be sent
