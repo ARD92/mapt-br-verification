@@ -1,5 +1,5 @@
 /* Author: Aravind Prabhakar
-   Version: 1.1
+   Version: 1.2
    Description: This app generates IPv6 packets with embedded v4 host addresses with permissible source ports
    to validate BR functionality. Creates IPv6 packets mimicing MAP-T CE functionality
 */
@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	//"encoding/hex"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
@@ -460,14 +461,14 @@ func calculateRange(mapt MaptDomain) []map[string]string {
 // createIpv6 Packet
 func createV6Packet(pkt []map[string]string, smac string, dmac string, intf string, pkttype string) [][]byte {
 	var (
-		udp    *layers.UDP
-		buffer gopacket.SerializeBuffer
-		//icmp     *layers.ICMPv4
+		udp     *layers.UDP
+		buffer  gopacket.SerializeBuffer
+		iecho   *layers.ICMPv6Echo
+		icmp6   *layers.ICMPv6
 		smacadd []byte
 		dmacadd []byte
 		sipaddr []byte
 		dipaddr []byte
-		//protocol layers.IPProtocol
 		payload gopacket.SerializableLayer
 		v6pkts  [][]byte
 	)
@@ -475,15 +476,14 @@ func createV6Packet(pkt []map[string]string, smac string, dmac string, intf stri
 	for i := 0; i < len(pkt); i++ {
 		sipaddr = net.ParseIP(pkt[i]["sourceIp"])
 		dipaddr = net.ParseIP(pkt[i]["destIp"])
-		if pkttype == "icmp" {
-			fmt.Println("currently not supported. Needs enhancement")
-			//icmp = &layers.ICMPv6{TypeCode: layers.ICMPv6TypeCode(8)}
-			//protocol = layers.IPProtocolICMPv6
+		if pkttype == "icmp6" {
+			icmp6 = &layers.ICMPv6{TypeCode: layers.CreateICMPv6TypeCode(layers.ICMPv6TypeEchoRequest, 0)}
+			source, _ := strconv.Atoi(pkt[i]["sourcePort"])
+			iecho = &layers.ICMPv6Echo{Identifier: uint16(source), SeqNumber: 1}
 		} else if pkttype == "udp" {
 			source, _ := strconv.Atoi(pkt[i]["sourcePort"])
 			dest, _ := strconv.Atoi(pkt[i]["destPort"])
 			udp = &layers.UDP{SrcPort: layers.UDPPort(source), DstPort: layers.UDPPort(dest)}
-			//protocol = layers.IPProtocolUDP
 		} else {
 			panic("source port and destination port missing. please add accordingly\n")
 		}
@@ -500,6 +500,18 @@ func createV6Packet(pkt []map[string]string, smac string, dmac string, intf stri
 			if err := gopacket.SerializeLayers(buffer,
 				gopacket.SerializeOptions{ComputeChecksums: true, FixLengths: true},
 				eth, ip, udp, payload); err != nil {
+				return nil
+			}
+		} else if pkttype == "icmp6" {
+			eth := &layers.Ethernet{SrcMAC: smacadd, DstMAC: dmacadd, EthernetType: 0x086DD}
+			ip := &layers.IPv6{Version: 6, DstIP: dipaddr, SrcIP: sipaddr, NextHeader: layers.IPProtocolICMPv6, HopLimit: 64}
+			if err := icmp6.SetNetworkLayerForChecksum(ip); err != nil {
+				return nil
+			}
+			buffer = gopacket.NewSerializeBuffer()
+			if err := gopacket.SerializeLayers(buffer,
+				gopacket.SerializeOptions{ComputeChecksums: true, FixLengths: true},
+				eth, ip, icmp6, iecho, payload); err != nil {
 				return nil
 			}
 		}
@@ -534,7 +546,7 @@ func main() {
 		if (os.Args[1] == "help") || (os.Args[1] == "--help") {
 			fmt.Printf(`
 	==============  MAP-T BR Verification Tool  ================
-	Version: 1.1 
+	Version: 1.2 
 
 	Usage: 
 
@@ -543,7 +555,7 @@ func main() {
 
 	This will craft packets within the defined ranges such that the BR would 
 	translate. The idea is mimic a CPE device generating an IPv4 embedded Ipv6
-	address towards the BR.
+	address towards the BR.This can generate icmp6 or udp packets
 	
 	when using the flag generate-incorrect-ranges. This will intentially craft a 
 	packet outside of the range of PSID or use incorrect mapt-prefixes such that
